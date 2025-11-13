@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bom Dia 8B — Supabase</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin:0; padding:1rem; background:#f3faf7; color:#0f172a; }
+  h1,h2,h3{margin-top:0}
+  .card{background:white;border-radius:12px;padding:1rem;margin-bottom:1rem;box-shadow:0 6px 18px rgba(2,6,23,0.06);}
+  button{background:#0ea5a4;color:white;border:0;padding:.5rem .75rem;border-radius:8px;cursor:pointer;margin:.2rem 0;}
+  button.ghost{background:transparent;color:#0ea5a4;border:1px solid #0ea5a4;}
+  input[type=file], input[type=text]{display:block;margin:.5rem 0;width:100%;padding:.5rem;border-radius:6px;border:1px solid #ccc;}
+  ul{list-style:none;padding:0;margin:0}
+  li.file{display:flex;justify-content:space-between;align-items:center;padding:.5rem;border-radius:8px;border:1px solid #eef2f2;margin-bottom:.5rem;}
+  .small{font-size:.85rem;color:#475569;}
+  .danger{background:#ef4444;}
+  .muted{color:#64748b;}
+  .admin-badge{background:#fde68a;padding:.15rem .4rem;border-radius:6px;font-size:.75rem;}
+</style>
+</head>
+<body>
+
+<h1>Bom Dia 8B</h1>
+<div class="card" id="auth-card">
+  <span id="user-email" class="muted">Não autenticado</span><br>
+  <button id="login-btn">Entrar com Google</button>
+  <button id="logout-btn" class="ghost" style="display:none">Sair</button>
+</div>
+
+<div class="card" id="owner-panel" style="display:none;">
+  <h2>Painel do Proprietário</h2>
+  <p class="small muted">Tu és o proprietário — podes enviar ficheiros, apagar e banir utilizadores.</p>
+  <input type="file" id="file-input">
+  <button id="upload-btn">Enviar ficheiro</button>
+  <div id="upload-msg" class="small muted"></div>
+
+  <h3>Ficheiros publicados</h3>
+  <ul id="files-list"></ul>
+
+  <h3>Utilizadores</h3>
+  <ul id="users-list"></ul>
+</div>
+
+<div class="card" id="visitor-panel" style="display:none;">
+  <h2>Ficheiros publicados</h2>
+  <ul id="files-list-visitor"></ul>
+</div>
+
+<script type="module">
+  import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
+
+  // ========================
+  // CONFIGURAÇÕES
+  // ========================
+  const SUPABASE_URL = 'COLOCA_AQUI_TUA_URL';
+  const SUPABASE_ANON_KEY = 'COLOCA_AQUI_TUA_ANON_KEY';
+  const OWNER_EMAIL = 'TEU_EMAIL@gmail.com'; // só tu és o proprietário
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const loginBtn = document.getElementById('login-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  const userEmailSpan = document.getElementById('user-email');
+  const ownerPanel = document.getElementById('owner-panel');
+  const visitorPanel = document.getElementById('visitor-panel');
+  const fileInput = document.getElementById('file-input');
+  const uploadBtn = document.getElementById('upload-btn');
+  const uploadMsg = document.getElementById('upload-msg');
+  const filesList = document.getElementById('files-list');
+  const filesListVisitor = document.getElementById('files-list-visitor');
+  const usersList = document.getElementById('users-list');
+
+  // LOGIN/LOGOUT
+  loginBtn.onclick = async () => {
+    await supabase.auth.signInWithOAuth({ provider: 'google' });
+  }
+
+  logoutBtn.onclick = async () => {
+    await supabase.auth.signOut();
+    location.reload();
+  }
+
+  const refreshUI = async (session) => {
+    if(!session) {
+      userEmailSpan.textContent = "Não autenticado";
+      loginBtn.style.display = 'inline-block';
+      logoutBtn.style.display = 'none';
+      ownerPanel.style.display = 'none';
+      visitorPanel.style.display = 'none';
+      return;
+    }
+    const user = session.user;
+    userEmailSpan.textContent = user.email;
+    loginBtn.style.display = 'none';
+    logoutBtn.style.display = 'inline-block';
+
+    if(user.email === OWNER_EMAIL) {
+      ownerPanel.style.display = 'block';
+      visitorPanel.style.display = 'none';
+    } else {
+      ownerPanel.style.display = 'none';
+      visitorPanel.style.display = 'block';
+    }
+
+    // lista ficheiros
+    const { data: files } = await supabase
+      .from('files')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    const renderFileList = (listEl) => {
+      listEl.innerHTML = '';
+      files.forEach(f => {
+        const li = document.createElement('li');
+        li.className = 'file';
+        const left = document.createElement('div');
+        left.textContent = f.name;
+        const right = document.createElement('div');
+
+        const link = document.createElement('a');
+        link.href = f.url;
+        link.textContent = 'Descarregar';
+        link.target = '_blank';
+        right.appendChild(link);
+
+        if(user.email === OWNER_EMAIL){
+          const del = document.createElement('button');
+          del.textContent = 'Apagar';
+          del.className = 'danger';
+          del.onclick = async () => {
+            await supabase.storage.from('files').remove([f.path]);
+            await supabase.from('files').delete().eq('id', f.id);
+            refreshUI(session);
+          }
+          right.appendChild(del);
+        }
+
+        li.appendChild(left);
+        li.appendChild(right);
+        listEl.appendChild(li);
+      });
+    }
+
+    renderFileList(filesList);
+    renderFileList(filesListVisitor);
+
+    // lista utilizadores
+    if(user.email === OWNER_EMAIL){
+      const { data: users } = await supabase.from('users').select('*');
+      usersList.innerHTML = '';
+      users.forEach(u=>{
+        const li = document.createElement('li');
+        li.textContent = u.email;
+        const btn = document.createElement('button');
+        btn.textContent = u.banned ? 'Desbanir':'Banir';
+        btn.onclick = async () => {
+          await supabase.from('users').update({banned: !u.banned}).eq('id', u.id);
+          refreshUI(session);
+        }
+        li.appendChild(btn);
+        usersList.appendChild(li);
+      });
+    }
+  }
+
+  // OBSERVA autenticação
+  supabase.auth.onAuthStateChange((_event, session)=>{
+    refreshUI(session);
+  })
+
+  // UPLOAD ficheiros
+  uploadBtn.onclick = async ()=>{
+    const file = fileInput.files[0];
+    if(!file) return uploadMsg.textContent='Escolhe um ficheiro';
+    const path = `${Date.now()}_${file.name}`;
+    const { error: uploadError } = await supabase.storage.from('files').upload(path, file);
+    if(uploadError) { uploadMsg.textContent = 'Erro ao enviar: '+uploadError.message; return;}
+    const { publicURL } = supabase.storage.from('files').getPublicUrl(path);
+    await supabase.from('files').insert([{ name:file.name, path, url: publicURL }]);
+    uploadMsg.textContent='Ficheiro enviado com sucesso!';
+    fileInput.value='';
+    const session = supabase.auth.getSession().then(res=>refreshUI(res.data.session));
+  }
+</script>
+
+</body>
+</html>
